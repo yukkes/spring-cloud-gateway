@@ -58,8 +58,7 @@ import org.springframework.web.util.UriComponentsBuilder;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-@SpringBootTest(properties = { "spring.cloud.gateway.proxy.auto-forward=baz" },
-		webEnvironment = WebEnvironment.RANDOM_PORT)
+@SpringBootTest(properties = { "spring.cloud.gateway.proxy.skipped=host" }, webEnvironment = WebEnvironment.RANDOM_PORT)
 @ContextConfiguration(classes = TestApplication.class)
 @DirtiesContext
 public class ProductionConfigurationTests {
@@ -117,6 +116,21 @@ public class ProductionConfigurationTests {
 	public void post() throws Exception {
 		assertThat(rest.postForObject("/proxy/0", Collections.singletonMap("name", "foo"), Bar.class).getName())
 				.isEqualTo("host=localhost:" + port + ";foo");
+	}
+
+	@Test
+	public void postJsonWithWhitespace() {
+		var json = """
+				{
+					"foo": "bar"
+				}""";
+
+		var headers = new HttpHeaders();
+		headers.setContentType(MediaType.APPLICATION_JSON);
+		headers.setContentLength(json.length());
+		var request = new HttpEntity<>(json, headers);
+		assertThat(rest.postForEntity("/proxy/checkContentLength", request, Void.class).getStatusCode())
+				.isEqualTo(HttpStatus.OK);
 	}
 
 	@Test
@@ -353,6 +367,11 @@ public class ProductionConfigurationTests {
 				return proxy.uri(home.toString() + "/headers").get();
 			}
 
+			@PostMapping("/proxy/checkContentLength")
+			public Mono<ResponseEntity<byte[]>> checkContentLength(ProxyExchange<byte[]> proxy) {
+				return proxy.uri(home.toString() + "/checkContentLength").post();
+			}
+
 			private <T> ResponseEntity<T> first(ResponseEntity<List<T>> response) {
 				return ResponseEntity.status(response.getStatusCode()).headers(response.getHeaders())
 						.body(response.getBody().iterator().next());
@@ -406,6 +425,16 @@ public class ProductionConfigurationTests {
 				custom = custom == null ? "" : custom;
 				custom = headers.getFirst("forwarded") == null ? custom : headers.getFirst("forwarded") + ";" + custom;
 				return Arrays.asList(new Bar(custom + foos.iterator().next().getName()));
+			}
+
+			@PostMapping("/checkContentLength")
+			public ResponseEntity<?> checkContentLength(
+					@RequestHeader(name = "Content-Length", required = false) Integer contentLength,
+					@RequestBody String json) {
+				if (contentLength != null && contentLength != json.length()) {
+					return ResponseEntity.badRequest().build();
+				}
+				return ResponseEntity.ok().build();
 			}
 
 			@GetMapping("/headers")
